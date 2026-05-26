@@ -155,7 +155,7 @@ export default function PlanCanvas() {
         if (state.mode === "draw") {
           dispatch({ type: "DRAWING_CANCEL" });
         } else if (state.mode === "scale") {
-          setCalibrationPoints({ a: null, b: null });
+          dispatch({ type: "CLEAR_CALIBRATION" });
         }
       }
     },
