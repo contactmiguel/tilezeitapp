@@ -210,7 +210,7 @@ function ProjectSummaryPanel() {
   const { state, dispatch } = useWorkspace();
 
   // Show AI analysis if analyzing, done, or error
-  if (state.aiStatus === "analyzing" || state.aiStatus === "done" || state.aiStatus === "error" || (state.aiStatus === "done" && state.aiSurfaces.length > 0)) {
+  if (state.aiStatus === "analyzing" || state.aiStatus === "done" || state.aiStatus === "error") {
     return (
       <section className="panel-section">
         <h3>AI Analysis</h3>
@@ -448,11 +448,11 @@ function DrawPanel() {
         onChange={(e) => setLabel(e.target.value)}
       />
 
-      {state.aiAnalysis && state.aiAnalysis.surfaces && state.aiAnalysis.surfaces.length > 0 && (
+      {state.aiSurfaces && state.aiSurfaces.length > 0 && (
         <div style={{ marginTop: "12px" }}>
           <p className="muted">AI suggestions:</p>
           <div className="ai-suggestions">
-            {state.aiAnalysis.surfaces.map((suggestion, i) => (
+            {state.aiSurfaces.map((suggestion, i) => (
               <button
                 key={i}
                 className="ai-suggestion-chip"
