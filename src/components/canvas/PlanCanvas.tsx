@@ -94,6 +94,20 @@ function computeScale(measurements: Measurement[]) {
   };
 }
 
+async function pdfToImageUrl(file: File): Promise<string> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjs.getDocument({ data }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext("2d")!, viewport, canvas }).promise;
+  return canvas.toDataURL("image/png");
+}
+
 export default function PlanCanvas() {
   const { state, dispatch } = useWorkspace();
   const stageRef = useRef<any>(null);
@@ -163,7 +177,8 @@ export default function PlanCanvas() {
   );
 
   const handleFileUpload = async (file: File) => {
-    const url = URL.createObjectURL(file);
+    const isPdf = file.type === "application/pdf";
+    const url = isPdf ? await pdfToImageUrl(file) : URL.createObjectURL(file);
     dispatch({
       type: "SET_PLAN",
       payload: {
@@ -391,14 +406,14 @@ export default function PlanCanvas() {
         <div className="canvas-placeholder">
           <div>
             <h2>Upload a plan</h2>
-            <p>PNG or JPG (PDF support coming soon)</p>
+            <p>PNG, JPG, or PDF</p>
             <button
               className="primary-button"
               type="button"
               onClick={() => {
                 const input = document.createElement("input");
                 input.type = "file";
-                input.accept = "image/png,image/jpeg";
+                input.accept = "image/png,image/jpeg,application/pdf";
                 input.onchange = (e: any) => {
                   const file = e.target.files?.[0];
                   if (file) {

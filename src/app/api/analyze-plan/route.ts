@@ -16,25 +16,33 @@ export async function POST(request: Request) {
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
 
+    const isPdf = mimeType === "application/pdf";
+    const fileContent = isPdf
+      ? ({
+          type: "document" as const,
+          source: {
+            type: "base64" as const,
+            media_type: "application/pdf" as const,
+            data: imageBase64,
+          },
+        } as const)
+      : ({
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: mimeType as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+            data: imageBase64,
+          },
+        } as const);
+
     const stream = client.messages.stream({
-      model: "claude-opus-4-7",
+      model: "claude-opus-4-8",
       max_tokens: 4096,
       messages: [
         {
           role: "user",
           content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mimeType as
-                  | "image/png"
-                  | "image/jpeg"
-                  | "image/gif"
-                  | "image/webp",
-                data: imageBase64,
-              },
-            },
+            fileContent,
             {
               type: "text",
               text: `Analyze this architectural floor plan carefully. Your task is to:
