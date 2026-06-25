@@ -166,6 +166,7 @@ export default function RightPanel({ mode }: RightPanelProps) {
             {"\n"}AI Status: {state.aiStatus}
             {"\n"}Surfaces: {state.aiSurfaces.length}
             {"\n"}Zones: {state.zones.length}
+            {state.lastAiSummary ? `\nLast run: ${state.lastAiSummary}` : ""}
           </div>
           <div style={{ marginTop: "8px", fontSize: "11px", color: "#666" }}>
             Open browser console (F12) to see detailed logs

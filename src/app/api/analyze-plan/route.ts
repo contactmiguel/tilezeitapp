@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
     const stream = client.messages.stream({
       model: "claude-opus-4-8",
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         {
           role: "user",
@@ -45,36 +45,23 @@ export async function POST(request: Request) {
             fileContent,
             {
               type: "text",
-              text: `Analyze this architectural floor plan carefully. Your task is to:
-1. Extract ALL visible dimension callouts (e.g., "16'", "12'-6\"", "18 x 24")
-2. Identify every surface suitable for tiles, stone, or flooring materials
-3. For each dimension found, output its pixel coordinates so we can calculate scale
+              text: `You are analyzing an architectural floor plan. Output ONLY raw JSON lines (NDJSON), no explanations, no markdown, no code blocks.
 
-CRITICAL: Output ONLY valid JSON lines (NDJSON format), one per line.
+STEP 1 — Output one JSON line per tiled/floored surface. Use EXACTLY this schema:
+{"label":"Kitchen Floor","surface":"floor","estimatedSqft":180,"dimensionNote":"12x15","hasMeasurement":true,"points":[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}
 
-For dimension callouts with pixel positions:
-{"type":"measurement","label":"<room/surface>","dimensionText":"<exact text from plan>","pixelDistance":<pixels>,"estimatedFeet":<feet>,"confidence":<0-1>}
+Rules for surface lines:
+- "label": descriptive room name + surface type (e.g. "Master Bath Floor", "Entry Backsplash")
+- "surface": must be exactly one of: floor, wall, shower, backsplash, countertop
+- "estimatedSqft": estimate the area in sq ft — use visible dimensions or proportional estimates. MUST be a positive number.
+- "dimensionNote": any dimension text visible near that surface (e.g. "12'x15'"). Empty string if none.
+- "hasMeasurement": true if dimension callouts are visible for this surface, false otherwise
+- "points": array of [x,y] integer pixel coordinate pairs forming the polygon boundary. At least 4 points.
 
-For each surface:
-{"label":"<room name and surface>","surface":"<floor|wall|shower|backsplash|countertop>","dimensionNote":"<visible dimensions>","estimatedSqft":<calculated number>,"hasMeasurement":<true|false>,"points":[[x1,y1],[x2,y2],[x3,y3],...]}
+STEP 2 — After all surfaces, output dimension measurements found in the plan:
+{"type":"measurement","label":"<what was measured>","dimensionText":"<exact text>","pixelDistance":<integer>,"estimatedFeet":<number>,"confidence":<0-1>}
 
-For scale indicators:
-{"type":"scale","note":"<scale indicator found>"}
-
-RULES:
-1. FIRST, scan the plan for all visible dimension callouts (numbers with ' or " symbols, or dimensions like "16 x 18")
-2. For each callout found, estimate the pixel length of that dimension on the image and output as "measurement"
-3. Then identify all rooms and surfaces suitable for tiling/flooring
-4. For surfaces with visible dimensions on the plan, set "hasMeasurement":true
-5. For each surface, output label, surface type, dimension note, estimatedSqft, and polygon points
-6. "points" must be an array of [x,y] integer pixel coordinate pairs tracing the boundary polygon of that surface in the image. Use the actual room/surface wall lines. Include at least 4 points; use more for L-shaped or irregular rooms. Coordinates must be within the image bounds.
-7. Output ONLY valid JSON, no explanations or text
-8. Each item gets its own line
-9. Do not wrap in array brackets []
-
-IMPORTANT: Pixel distances and polygon points should be as accurate as possible - these are used to calculate scale and draw surface outlines on the plan.
-
-Begin output now - JSON lines only:`,
+Output surfaces FIRST, measurements SECOND. Begin now — JSON lines only:`,
             },
           ],
         },

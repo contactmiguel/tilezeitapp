@@ -77,4 +77,5 @@ export type WorkspaceState = {
   };
   regionBox: RegionBox | null;
   activeAiSurfaceId: string | null;
+  lastAiSummary: string | null;
 };

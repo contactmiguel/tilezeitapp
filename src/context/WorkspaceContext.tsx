@@ -49,6 +49,7 @@ type Action =
   | { type: "SET_REGION_BOX"; payload: RegionBox | null }
   | { type: "SET_ACTIVE_AI_SURFACE"; payload: string | null }
   | { type: "UPDATE_AI_SURFACE_POINTS"; payload: { id: string; points: number[] } }
+  | { type: "SET_LAST_AI_SUMMARY"; payload: string }
   | { type: "LOAD_FROM_STORAGE"; payload: Partial<WorkspaceState> };
 
 const initialState: WorkspaceState = {
@@ -65,6 +66,7 @@ const initialState: WorkspaceState = {
   calibrationPoints: { a: null, b: null },
   regionBox: null,
   activeAiSurfaceId: null,
+  lastAiSummary: null,
 };
 
 function generateColor(): string {
@@ -290,7 +292,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
 
     case "CLEAR_AI_SURFACES":
-      return { ...state, aiSurfaces: [], activeAiSurfaceId: null };
+      return { ...state, aiSurfaces: [], activeAiSurfaceId: null, lastAiSummary: null };
+
+    case "SET_LAST_AI_SUMMARY":
+      return { ...state, lastAiSummary: action.payload };
 
     case "UPDATE_PLAN_URL":
       if (!state.plan) return state;

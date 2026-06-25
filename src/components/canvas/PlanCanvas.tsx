@@ -211,15 +211,22 @@ export default function PlanCanvas() {
               });
               continue;
             }
-            if (!parsed.label || !parsed.surface) {
-              console.warn("Skipping line — missing label or surface:", line);
+            // Normalize field names — Claude sometimes uses synonyms
+            const label = parsed.label || parsed.name || parsed.room || parsed.roomName || parsed.title || "";
+            const surface = parsed.surface || parsed.surfaceType || parsed.material || "";
+            const estimatedSqft = parsed.estimatedSqft ?? parsed.sqft ?? parsed.area ?? parsed.squareFeet ?? parsed.areaSqft ?? 0;
+            const dimensionNote = parsed.dimensionNote || parsed.dimensions || parsed.size || parsed.note || "";
+            const rawPtsField = parsed.points || parsed.polygon || parsed.vertices || parsed.coordinates;
+
+            if (!label || !surface) {
+              console.warn("Skipping line — missing label or surface (fields seen:", Object.keys(parsed).join(","), "):", line.slice(0, 120));
               hasParseErrors = true;
               continue;
             }
             surfaceCount++;
-            const { width, length } = parseDimensions(parsed.dimensionNote);
+            const { width, length } = parseDimensions(dimensionNote);
             // Convert [[x,y],...] → flat [x,y,...] and apply crop offset if present
-            const rawPts: number[][] | undefined = Array.isArray(parsed.points) ? parsed.points : undefined;
+            const rawPts: number[][] | undefined = Array.isArray(rawPtsField) ? rawPtsField : undefined;
             const flatPoints: number[] = rawPts
               ? rawPts.flatMap(([px, py]: number[]) => [
                   (offset?.x ?? 0) + px,
@@ -234,8 +241,12 @@ export default function PlanCanvas() {
                 confirmed: false,
                 width,
                 length,
-                hasMeasurement: parsed.hasMeasurement || false,
+                hasMeasurement: parsed.hasMeasurement ?? parsed.hasDimension ?? false,
                 ...parsed,
+                label,
+                surface,
+                estimatedSqft,
+                dimensionNote,
                 points: flatPoints,
               },
             });
@@ -298,12 +309,11 @@ export default function PlanCanvas() {
         }
       }
 
-      console.log(`📊 AI stream done: ${surfaceCount} surfaces, ${measurements.length} measurements, parseErrors=${hasParseErrors}, nonJsonLines=${plainTextLines.length}`);
-      if (plainTextLines.length > 0) {
-        console.log("📝 Non-JSON lines from Claude:", plainTextLines.join("\n"));
-      }
+      const summary = `surfaces=${surfaceCount} measurements=${measurements.length} parseErrors=${hasParseErrors} nonJsonLines=${plainTextLines.length}${plainTextLines.length > 0 ? " | first bad line: " + plainTextLines[0].slice(0, 100) : ""}`;
+      console.log("📊 AI stream done:", summary);
+      if (isCurrent()) dispatch({ type: "SET_LAST_AI_SUMMARY", payload: summary });
 
-      if (surfaceCount === 0 && (hasParseErrors || measurements.length === 0)) {
+      if (surfaceCount === 0) {
         dispatch({ type: "SET_AI_STATUS", payload: "error" });
       } else {
         dispatch({ type: "SET_AI_STATUS", payload: "done" });
