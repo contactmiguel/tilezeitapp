@@ -1,7 +1,14 @@
-export type WorkspaceMode = "select" | "scale" | "draw";
+export type WorkspaceMode = "select" | "scale" | "draw" | "region";
 export type SurfaceType = "floor" | "wall" | "shower" | "backsplash" | "countertop";
 export type Unit = "ft" | "in";
 export type AiStatus = "idle" | "analyzing" | "done" | "error";
+
+export type RegionBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type UploadedPlan = {
   file: File;
@@ -45,6 +52,12 @@ export type AiSurface = {
   width?: number;
   length?: number;
   hasMeasurement?: boolean;
+  points: number[]; // flat Konva format [x1,y1,x2,y2,...], empty if AI didn't return coords
+  // Locked reference from AI — never mutated after creation (except when user manually edits dimensions)
+  originalPoints?: number[];
+  originalSqft?: number;
+  originalWidth?: number;
+  originalLength?: number;
 };
 
 export type WorkspaceState = {
@@ -62,4 +75,6 @@ export type WorkspaceState = {
     a: { x: number; y: number } | null;
     b: { x: number; y: number } | null;
   };
+  regionBox: RegionBox | null;
+  activeAiSurfaceId: string | null;
 };

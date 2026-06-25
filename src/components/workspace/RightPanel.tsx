@@ -209,6 +209,18 @@ function AnalyzingIndicator({ surfaceCount }: { surfaceCount: number }) {
 function ProjectSummaryPanel() {
   const { state, dispatch } = useWorkspace();
 
+  // No plan loaded — don't show stale persisted zone data
+  if (!state.plan) {
+    return (
+      <section className="panel-section">
+        <h3>Project Summary</h3>
+        <p className="muted" style={{ marginTop: "8px" }}>
+          Upload a floor plan to get started.
+        </p>
+      </section>
+    );
+  }
+
   // Show AI analysis if analyzing, done, or error
   if (state.aiStatus === "analyzing" || state.aiStatus === "done" || state.aiStatus === "error") {
     return (
@@ -234,6 +246,7 @@ function ProjectSummaryPanel() {
             <SurfaceRow
               key={surface.id}
               surface={surface}
+              isActive={surface.id === state.activeAiSurfaceId}
               dispatch={dispatch}
               flaggedMeasurements={state.scale?.flaggedMeasurements || []}
             />
@@ -526,7 +539,7 @@ function getSmartDefaults(surface: any): { width?: number; length?: number; sugg
   return {};
 }
 
-function SurfaceRow({ surface, dispatch, flaggedMeasurements = [] }: any) {
+function SurfaceRow({ surface, isActive, dispatch, flaggedMeasurements = [] }: any) {
   const defaults = getSmartDefaults(surface);
   const initialWidth = defaults.width || "";
   const initialLength = defaults.length || "";
@@ -583,7 +596,17 @@ function SurfaceRow({ surface, dispatch, flaggedMeasurements = [] }: any) {
   };
 
   return (
-    <div style={{ padding: "8px", borderBottom: "1px solid #e5e7eb", fontSize: "12px" }}>
+    <div
+      onClick={() => dispatch({ type: "SET_ACTIVE_AI_SURFACE", payload: isActive ? null : surface.id })}
+      style={{
+        padding: "8px",
+        borderBottom: "1px solid #e5e7eb",
+        fontSize: "12px",
+        background: isActive ? "#eff6ff" : "transparent",
+        borderLeft: isActive ? "3px solid #3B82F6" : "3px solid transparent",
+        cursor: "pointer",
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
         <span style={{ fontWeight: "600" }}>{surface.label}</span>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -647,7 +670,22 @@ function SurfaceRow({ surface, dispatch, flaggedMeasurements = [] }: any) {
       <div style={{ fontSize: "11px", color: "#6b7280" }}>
         <div>📍 {surface.surface}</div>
       </div>
-      <div style={{ marginTop: "6px", display: "flex", gap: "6px" }}>
+      <div style={{ marginTop: "6px", display: "flex", gap: "6px" }} onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => dispatch({ type: "CONFIRM_AI_SURFACE", payload: surface.id })}
+          style={{
+            padding: "4px 8px",
+            fontSize: "11px",
+            background: surface.confirmed ? "#dcfce7" : "#0f766e",
+            color: surface.confirmed ? "#166534" : "white",
+            border: surface.confirmed ? "1px solid #86efac" : "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+            fontWeight: "600",
+          }}
+        >
+          {surface.confirmed ? "✓ Confirmed" : "Confirm"}
+        </button>
         <button
           onClick={() => dispatch({ type: "DELETE_AI_SURFACE", payload: surface.id })}
           style={{
@@ -657,12 +695,23 @@ function SurfaceRow({ surface, dispatch, flaggedMeasurements = [] }: any) {
             color: "#dc2626",
             border: "1px solid #fecaca",
             borderRadius: "4px",
-            cursor: "pointer"
+            cursor: "pointer",
           }}
         >
           Remove
         </button>
       </div>
+
+      {isActive && surface.points?.length >= 6 && (
+        <p style={{ margin: "6px 0 0", fontSize: "10px", color: "#3B82F6" }}>
+          Drag the handles on the canvas to adjust the outline.{surface.confirmed ? " Click ✓ Confirmed to unconfirm." : " Click Confirm when done."}
+        </p>
+      )}
+      {isActive && (!surface.points || surface.points.length < 6) && (
+        <p style={{ margin: "6px 0 0", fontSize: "10px", color: "#9ca3af" }}>
+          No outline available — AI did not return coordinates for this surface.
+        </p>
+      )}
     </div>
   );
 }

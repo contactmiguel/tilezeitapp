@@ -56,7 +56,7 @@ For dimension callouts with pixel positions:
 {"type":"measurement","label":"<room/surface>","dimensionText":"<exact text from plan>","pixelDistance":<pixels>,"estimatedFeet":<feet>,"confidence":<0-1>}
 
 For each surface:
-{"label":"<room name and surface>","surface":"<floor|wall|shower|backsplash|countertop>","dimensionNote":"<visible dimensions>","estimatedSqft":<calculated number>,"hasMeasurement":<true|false>}
+{"label":"<room name and surface>","surface":"<floor|wall|shower|backsplash|countertop>","dimensionNote":"<visible dimensions>","estimatedSqft":<calculated number>,"hasMeasurement":<true|false>,"points":[[x1,y1],[x2,y2],[x3,y3],...]}
 
 For scale indicators:
 {"type":"scale","note":"<scale indicator found>"}
@@ -66,12 +66,13 @@ RULES:
 2. For each callout found, estimate the pixel length of that dimension on the image and output as "measurement"
 3. Then identify all rooms and surfaces suitable for tiling/flooring
 4. For surfaces with visible dimensions on the plan, set "hasMeasurement":true
-5. For each surface, output label, surface type, dimension note, and estimatedSqft
-6. Output ONLY valid JSON, no explanations or text
-7. Each item gets its own line
-8. Do not wrap in array brackets []
+5. For each surface, output label, surface type, dimension note, estimatedSqft, and polygon points
+6. "points" must be an array of [x,y] integer pixel coordinate pairs tracing the boundary polygon of that surface in the image. Use the actual room/surface wall lines. Include at least 4 points; use more for L-shaped or irregular rooms. Coordinates must be within the image bounds.
+7. Output ONLY valid JSON, no explanations or text
+8. Each item gets its own line
+9. Do not wrap in array brackets []
 
-IMPORTANT: Pixel distances should be as accurate as possible - these are used to calculate the actual scale of the floor plan.
+IMPORTANT: Pixel distances and polygon points should be as accurate as possible - these are used to calculate scale and draw surface outlines on the plan.
 
 Begin output now - JSON lines only:`,
             },
