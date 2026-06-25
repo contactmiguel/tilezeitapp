@@ -16,6 +16,7 @@ import type {
   AiSurface,
   AiStatus,
   SurfaceType,
+  RegionBox,
 } from "@/types/workspace";
 import { saveWorkspace, loadWorkspace } from "@/lib/storage";
 import { pixelsToSqft, polygonAreaPixels } from "@/lib/area";
@@ -40,10 +41,14 @@ type Action =
   | { type: "CONFIRM_AI_SURFACE"; payload: string }
   | { type: "DELETE_AI_SURFACE"; payload: string }
   | { type: "CLEAR_AI_SURFACES" }
+  | { type: "UPDATE_PLAN_URL"; payload: string }
   | { type: "SET_CALIBRATION_A"; payload: { x: number; y: number } }
   | { type: "SET_CALIBRATION_B"; payload: { x: number; y: number } }
   | { type: "CLEAR_CALIBRATION" }
   | { type: "UNDO" }
+  | { type: "SET_REGION_BOX"; payload: RegionBox | null }
+  | { type: "SET_ACTIVE_AI_SURFACE"; payload: string | null }
+  | { type: "UPDATE_AI_SURFACE_POINTS"; payload: { id: string; points: number[] } }
   | { type: "LOAD_FROM_STORAGE"; payload: Partial<WorkspaceState> };
 
 const initialState: WorkspaceState = {
@@ -58,6 +63,8 @@ const initialState: WorkspaceState = {
   aiStatus: "idle",
   aiSurfaces: [],
   calibrationPoints: { a: null, b: null },
+  regionBox: null,
+  activeAiSurfaceId: null,
 };
 
 function generateColor(): string {
@@ -81,9 +88,16 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         plan: action.payload,
-        drawing: { ...state.drawing, isActive: false, points: [] },
+        drawing: { isActive: false, points: [], surface: "floor", label: "" },
         aiSurfaces: [],
         aiStatus: "idle",
+        regionBox: null,
+        zones: [],
+        scale: null,
+        calibrationPoints: { a: null, b: null },
+        activeZoneId: null,
+        activeAiSurfaceId: null,
+        mode: "select",
       };
 
     case "SET_PROJECT_NAME":
@@ -207,17 +221,18 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     case "AI_SURFACE_FOUND": {
       const surface = action.payload;
 
-      // Validate required fields
-      if (!surface.label || !surface.surface || surface.estimatedSqft === null || surface.estimatedSqft === undefined) {
-        console.error("Invalid surface - missing required fields:", surface);
+      if (!surface.label || !surface.surface) {
+        console.error("Invalid surface - missing label or surface type:", surface);
         return state;
       }
 
-      // Round up dimensions to nearest integer
       const roundedWidth = surface.width ? Math.ceil(surface.width) : undefined;
       const roundedLength = surface.length ? Math.ceil(surface.length) : undefined;
-      const roundedEstimate = roundedWidth && roundedLength ? roundedWidth * roundedLength : surface.estimatedSqft;
+      // Default to 0 if Claude couldn't estimate the area
+      const baseEstimate = surface.estimatedSqft ?? 0;
+      const roundedEstimate = roundedWidth && roundedLength ? roundedWidth * roundedLength : baseEstimate;
 
+      const lockedPoints = surface.points && surface.points.length >= 6 ? [...surface.points] : [];
       return {
         ...state,
         aiSurfaces: [
@@ -227,6 +242,11 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
             width: roundedWidth,
             length: roundedLength,
             estimatedSqft: roundedEstimate,
+            points: lockedPoints,
+            originalPoints: lockedPoints,   // locked reference — never mutated
+            originalSqft: roundedEstimate,  // locked reference — never mutated
+            originalWidth: roundedWidth,    // locked reference — updated only on manual edit
+            originalLength: roundedLength,  // locked reference — updated only on manual edit
           },
         ],
       };
@@ -241,8 +261,8 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
           if (s.id !== id) return s;
           const updated = { ...s };
           // Round up to nearest integer
-          if (width !== undefined) updated.width = Math.ceil(width);
-          if (length !== undefined) updated.length = Math.ceil(length);
+          if (width !== undefined) { updated.width = Math.ceil(width); updated.originalWidth = Math.ceil(width); }
+          if (length !== undefined) { updated.length = Math.ceil(length); updated.originalLength = Math.ceil(length); }
           // Calculate new sqft if both dimensions exist
           if (updated.width && updated.length) {
             updated.estimatedSqft = updated.width * updated.length;
@@ -254,25 +274,13 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     }
 
     case "CONFIRM_AI_SURFACE": {
-      const surface = state.aiSurfaces.find((s) => s.id === action.payload);
-      if (surface && surface.estimatedSqft !== null) {
-        const newZone: Zone = {
-          id: Math.random().toString(36).slice(2),
-          label: surface.label,
-          surface: surface.surface,
-          points: [],
-          areaSqft: surface.estimatedSqft,
-          color: generateColor(),
-        };
-        return {
-          ...state,
-          zones: [...state.zones, newZone],
-          aiSurfaces: state.aiSurfaces.map((s) =>
-            s.id === action.payload ? { ...s, confirmed: true } : s
-          ),
-        };
-      }
-      return state;
+      // Toggle confirmed — no Zone created, outline stays editable
+      return {
+        ...state,
+        aiSurfaces: state.aiSurfaces.map((s) =>
+          s.id === action.payload ? { ...s, confirmed: !s.confirmed } : s
+        ),
+      };
     }
 
     case "DELETE_AI_SURFACE":
@@ -282,7 +290,11 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
 
     case "CLEAR_AI_SURFACES":
-      return { ...state, aiSurfaces: [] };
+      return { ...state, aiSurfaces: [], activeAiSurfaceId: null };
+
+    case "UPDATE_PLAN_URL":
+      if (!state.plan) return state;
+      return { ...state, plan: { ...state.plan, url: action.payload } };
 
     case "SET_CALIBRATION_A":
       return {
@@ -302,6 +314,70 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         calibrationPoints: { a: null, b: null },
       };
 
+    case "SET_REGION_BOX":
+      return { ...state, regionBox: action.payload };
+
+    case "SET_ACTIVE_AI_SURFACE":
+      return { ...state, activeAiSurfaceId: action.payload };
+
+    case "UPDATE_AI_SURFACE_POINTS": {
+      const { id, points } = action.payload;
+      return {
+        ...state,
+        aiSurfaces: state.aiSurfaces.map((s) => {
+          if (s.id !== id) return s;
+          if (points.length < 6) return { ...s, points };
+
+          // Ratio-based: scale the AI's original sqft estimate by how much the
+          // polygon area changed relative to the original polygon. This keeps
+          // small handle adjustments proportionally small — auto-detected scale
+          // (pixelsPerFoot from the AI) is too unreliable to use for absolute
+          // area math, so we avoid it here.
+          const refPoints = s.originalPoints && s.originalPoints.length >= 6 ? s.originalPoints : null;
+          const refSqft = s.originalSqft ?? s.estimatedSqft ?? null;
+          if (refPoints && refSqft != null) {
+            const originalArea = polygonAreaPixels(refPoints);
+            const newArea = polygonAreaPixels(points);
+            if (originalArea > 0) {
+              const ratio = newArea / originalArea;
+              const newSqft = Math.max(1, Math.round(refSqft * ratio));
+              // Track x and y extents independently so that a purely horizontal
+              // drag only changes width, and a purely vertical drag only changes
+              // length — rather than uniformly scaling both via sqrt(areaRatio).
+              const bboxOf = (pts: number[]) => {
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                for (let i = 0; i < pts.length; i += 2) {
+                  if (pts[i] < minX) minX = pts[i];
+                  if (pts[i] > maxX) maxX = pts[i];
+                  if (pts[i + 1] < minY) minY = pts[i + 1];
+                  if (pts[i + 1] > maxY) maxY = pts[i + 1];
+                }
+                return { w: maxX - minX, h: maxY - minY };
+              };
+              const origBox = bboxOf(refPoints);
+              const newBox = bboxOf(points);
+              const xRatio = origBox.w > 0 ? newBox.w / origBox.w : 1;
+              const yRatio = origBox.h > 0 ? newBox.h / origBox.h : 1;
+              const refWidth = s.originalWidth ?? s.width;
+              const refLength = s.originalLength ?? s.length;
+              const newWidth = refWidth ? Math.round(refWidth * xRatio) : undefined;
+              const newLength = refLength ? Math.round(refLength * yRatio) : undefined;
+              return { ...s, points, estimatedSqft: newSqft, width: newWidth, length: newLength };
+            }
+          }
+
+          // Fallback: user has manually calibrated scale and there is no original
+          // reference polygon to ratio against — compute absolute area directly.
+          if (state.scale && state.scale.source === "line" && state.scale.pixelsPerFoot > 0) {
+            const newSqft = Math.max(1, Math.round(pixelsToSqft(polygonAreaPixels(points), state.scale.pixelsPerFoot)));
+            return { ...s, points, estimatedSqft: newSqft };
+          }
+
+          return { ...s, points };
+        }),
+      };
+    }
+
     case "UNDO":
       return {
         ...state,
@@ -309,7 +385,10 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
 
     case "LOAD_FROM_STORAGE":
-      return { ...state, ...action.payload };
+      // Only restore scale — zones are meaningless without the plan image,
+      // which is never persisted. Restoring zones causes stale data to bleed
+      // across sessions whenever a new file is uploaded.
+      return { ...state, scale: action.payload.scale ?? null };
 
     default:
       return state;
