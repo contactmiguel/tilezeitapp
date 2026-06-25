@@ -91,9 +91,10 @@ export async function POST(request: Request) {
 
     const stream = client.messages.stream({
       model: "claude-opus-4-8",
-      max_tokens: 8192,
+      max_tokens: 4096,
       tools: [surfaceTool, measurementTool],
-      tool_choice: { type: "auto" },
+      // "any" forces the model to call at least one tool — it cannot output plain text
+      tool_choice: { type: "any" },
       messages: [
         {
           role: "user",
@@ -101,21 +102,22 @@ export async function POST(request: Request) {
             fileContent,
             {
               type: "text",
-              text: `You are analyzing an architectural floor plan image to identify surfaces that need tiling or flooring.
+              text: `Analyze this architectural floor plan carefully. Your task is to:
+1. Extract ALL visible dimension callouts (e.g., "16'", "12'-6\"", "18 x 24")
+2. Identify every surface suitable for tiles, stone, or flooring materials
+3. For each dimension found, record its pixel coordinates so we can calculate scale
 
-Use the record_surface tool once for EVERY distinct surface area you can identify:
-- Every room floor (Great Room, Kitchen, Dining, Bedrooms, Bathrooms, Laundry, Hallways, etc.)
-- Any wall areas intended for tile
-- Shower floors and walls
-- Backsplashes and countertops
+Use record_measurement for each dimension callout you find on the plan.
+Use record_surface for each distinct surface area (every room floor, wall tile area, shower, backsplash, countertop).
 
-Rules:
-- Call record_surface for each room/surface separately
-- estimatedSqft must always be a positive number — estimate from room proportions if no dimensions are shown
-- Never skip a room, even if unsure of the exact size
-- Include pixel coordinates in "points" tracing each surface boundary
-
-After recording all surfaces, use record_measurement for any dimension callouts you see on the plan (room sizes, wall lengths, etc.).`,
+RULES:
+- FIRST, scan the entire plan for all visible dimension callouts and call record_measurement for each
+- THEN identify all rooms and surfaces and call record_surface for each
+- estimatedSqft must always be a positive number — estimate from room proportions if no dimensions shown
+- For surfaces WITH visible dimensions on the plan, set hasMeasurement: true
+- pixelDistance in measurements should be the actual pixel length of that dimension line on the image
+- Record EVERY room — do not skip any area visible in the floor plan
+- Include pixel polygon points for each surface boundary`,
             },
           ],
         },
