@@ -197,6 +197,8 @@ export default function PlanCanvas() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
+          // Skip markdown code fence markers (``` or ```json etc.)
+          if (line.trim().startsWith("```")) continue;
           try {
             const parsed = JSON.parse(line);
             if (parsed.type === "error") { if (isCurrent()) dispatch({ type: "SET_AI_STATUS", payload: "error" }); continue; }
@@ -291,6 +293,99 @@ export default function PlanCanvas() {
         }
       }
 
+      // Fallback: if model wrapped output in a JSON array or markdown code block,
+      // plainTextLines contains the raw text. Try to extract surfaces from it.
+      if (surfaceCount === 0 && plainTextLines.length > 0) {
+        const joined = plainTextLines
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("```"))
+          .join("\n");
+        // Re-split cleaned text and try parsing each line
+        const fallbackLines = joined.split("\n");
+        for (const fline of fallbackLines) {
+          if (!fline.trim()) continue;
+          try {
+            const parsed = JSON.parse(fline);
+            const label = parsed.label || parsed.name || parsed.room || "";
+            const surface = parsed.surface || parsed.surfaceType || "";
+            if (!label || !surface) continue;
+            surfaceCount++;
+            const { width, length } = parseDimensions(parsed.dimensionNote);
+            const rawPts: number[][] | undefined = Array.isArray(parsed.points) ? parsed.points : undefined;
+            const flatPoints: number[] = rawPts
+              ? rawPts.flatMap(([px, py]: number[]) => [
+                  (offset?.x ?? 0) + px,
+                  (offset?.y ?? 0) + py,
+                ])
+              : [];
+            if (!isCurrent()) { streamReader.cancel(); return; }
+            dispatch({
+              type: "AI_SURFACE_FOUND",
+              payload: {
+                id: Math.random().toString(36).slice(2),
+                confirmed: false,
+                width,
+                length,
+                hasMeasurement: parsed.hasMeasurement ?? false,
+                ...parsed,
+                label,
+                surface,
+                estimatedSqft: parsed.estimatedSqft ?? parsed.sqft ?? parsed.area ?? 0,
+                dimensionNote: parsed.dimensionNote || "",
+                points: flatPoints,
+              },
+            });
+          } catch { /* not valid JSON, skip */ }
+        }
+        if (surfaceCount > 0) {
+          console.log(`📦 Fallback parser recovered ${surfaceCount} surfaces from plain-text lines`);
+          hasParseErrors = false;
+        }
+        // Try JSON array format: [{...},{...}]
+        if (surfaceCount === 0) {
+          try {
+            const arrayMatch = joined.match(/\[[\s\S]*\]/);
+            if (arrayMatch) {
+              const arr = JSON.parse(arrayMatch[0]);
+              if (Array.isArray(arr)) {
+                for (const parsed of arr) {
+                  const label = parsed.label || parsed.name || parsed.room || "";
+                  const surface = parsed.surface || parsed.surfaceType || "";
+                  if (!label || !surface) continue;
+                  surfaceCount++;
+                  const { width, length } = parseDimensions(parsed.dimensionNote);
+                  const rawPts: number[][] | undefined = Array.isArray(parsed.points) ? parsed.points : undefined;
+                  const flatPoints: number[] = rawPts
+                    ? rawPts.flatMap(([px, py]: number[]) => [
+                        (offset?.x ?? 0) + px,
+                        (offset?.y ?? 0) + py,
+                      ])
+                    : [];
+                  if (!isCurrent()) { streamReader.cancel(); return; }
+                  dispatch({
+                    type: "AI_SURFACE_FOUND",
+                    payload: {
+                      id: Math.random().toString(36).slice(2),
+                      confirmed: false,
+                      width,
+                      length,
+                      hasMeasurement: parsed.hasMeasurement ?? false,
+                      ...parsed,
+                      label,
+                      surface,
+                      estimatedSqft: parsed.estimatedSqft ?? parsed.sqft ?? parsed.area ?? 0,
+                      dimensionNote: parsed.dimensionNote || "",
+                      points: flatPoints,
+                    },
+                  });
+                }
+                if (surfaceCount > 0) console.log(`📦 Fallback array parser recovered ${surfaceCount} surfaces`);
+              }
+            }
+          } catch { /* not a JSON array */ }
+        }
+      }
+
       if (!isCurrent()) return;
 
       if (measurements.length > 0) {
@@ -309,8 +404,12 @@ export default function PlanCanvas() {
         }
       }
 
-      const summary = `surfaces=${surfaceCount} measurements=${measurements.length} parseErrors=${hasParseErrors} nonJsonLines=${plainTextLines.length}${plainTextLines.length > 0 ? " | first bad line: " + plainTextLines[0].slice(0, 100) : ""}`;
+      const rawPreview = plainTextLines.length > 0
+        ? " | model output: " + plainTextLines.slice(0, 3).join(" ↵ ").slice(0, 200)
+        : "";
+      const summary = `surfaces=${surfaceCount} measurements=${measurements.length} parseErrors=${hasParseErrors} nonJsonLines=${plainTextLines.length}${rawPreview}`;
       console.log("📊 AI stream done:", summary);
+      if (plainTextLines.length > 0) console.log("📝 Raw model output (first 3 lines):", plainTextLines.slice(0, 3));
       if (isCurrent()) dispatch({ type: "SET_LAST_AI_SUMMARY", payload: summary });
 
       if (surfaceCount === 0) {

@@ -1,5 +1,65 @@
 import { Anthropic } from "@anthropic-ai/sdk";
 
+const surfaceTool: Anthropic.Tool = {
+  name: "record_surface",
+  description:
+    "Record one tiled/floored surface area identified in the floor plan. Call once per distinct surface.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      label: {
+        type: "string",
+        description: "Room name + surface type, e.g. 'Kitchen Floor', 'Master Bath Wall'",
+      },
+      surface: {
+        type: "string",
+        enum: ["floor", "wall", "shower", "backsplash", "countertop"],
+        description: "Category of this surface",
+      },
+      estimatedSqft: {
+        type: "number",
+        description:
+          "Best estimate of area in square feet. Use visible dimensions or estimate from room proportions. Must be > 0.",
+      },
+      dimensionNote: {
+        type: "string",
+        description: "Dimension text visible on the plan near this surface, e.g. \"14'x18'\". Empty string if none.",
+      },
+      hasMeasurement: {
+        type: "boolean",
+        description: "True if explicit dimension callouts are shown, false if estimating",
+      },
+      points: {
+        type: "array",
+        description: "Polygon boundary as [[x,y], ...] integer pixel coordinate pairs. At least 4 pairs.",
+        items: {
+          type: "array",
+          items: { type: "number" },
+          minItems: 2,
+          maxItems: 2,
+        },
+      },
+    },
+    required: ["label", "surface", "estimatedSqft", "dimensionNote", "hasMeasurement"],
+  },
+};
+
+const measurementTool: Anthropic.Tool = {
+  name: "record_measurement",
+  description: "Record a dimension measurement found in the floor plan.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      label: { type: "string", description: "What is being measured, e.g. 'living room width'" },
+      dimensionText: { type: "string", description: "Exact text from the plan, e.g. \"18'\"" },
+      pixelDistance: { type: "number", description: "Pixel length of that dimension on the image" },
+      estimatedFeet: { type: "number", description: "Real-world length in feet" },
+      confidence: { type: "number", description: "Confidence 0-1 that this measurement is correct" },
+    },
+    required: ["label", "dimensionText", "pixelDistance", "estimatedFeet", "confidence"],
+  },
+};
+
 export async function POST(request: Request) {
   try {
     const { imageBase64, mimeType } = await request.json();
@@ -12,19 +72,13 @@ export async function POST(request: Request) {
       return new Response("API key not configured", { status: 500 });
     }
 
-    const client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const isPdf = mimeType === "application/pdf";
     const fileContent = isPdf
       ? ({
           type: "document" as const,
-          source: {
-            type: "base64" as const,
-            media_type: "application/pdf" as const,
-            data: imageBase64,
-          },
+          source: { type: "base64" as const, media_type: "application/pdf" as const, data: imageBase64 },
         } as const)
       : ({
           type: "image" as const,
@@ -38,6 +92,8 @@ export async function POST(request: Request) {
     const stream = client.messages.stream({
       model: "claude-opus-4-8",
       max_tokens: 8192,
+      tools: [surfaceTool, measurementTool],
+      tool_choice: { type: "auto" },
       messages: [
         {
           role: "user",
@@ -45,60 +101,85 @@ export async function POST(request: Request) {
             fileContent,
             {
               type: "text",
-              text: `You are analyzing an architectural floor plan. Output ONLY raw JSON lines (NDJSON), no explanations, no markdown, no code blocks.
+              text: `You are analyzing an architectural floor plan image to identify surfaces that need tiling or flooring.
 
-STEP 1 — Output one JSON line per tiled/floored surface. Use EXACTLY this schema:
-{"label":"Kitchen Floor","surface":"floor","estimatedSqft":180,"dimensionNote":"12x15","hasMeasurement":true,"points":[[x1,y1],[x2,y2],[x3,y3],[x4,y4]]}
+Use the record_surface tool once for EVERY distinct surface area you can identify:
+- Every room floor (Great Room, Kitchen, Dining, Bedrooms, Bathrooms, Laundry, Hallways, etc.)
+- Any wall areas intended for tile
+- Shower floors and walls
+- Backsplashes and countertops
 
-Rules for surface lines:
-- "label": descriptive room name + surface type (e.g. "Master Bath Floor", "Entry Backsplash")
-- "surface": must be exactly one of: floor, wall, shower, backsplash, countertop
-- "estimatedSqft": estimate the area in sq ft — use visible dimensions or proportional estimates. MUST be a positive number.
-- "dimensionNote": any dimension text visible near that surface (e.g. "12'x15'"). Empty string if none.
-- "hasMeasurement": true if dimension callouts are visible for this surface, false otherwise
-- "points": array of [x,y] integer pixel coordinate pairs forming the polygon boundary. At least 4 points.
+Rules:
+- Call record_surface for each room/surface separately
+- estimatedSqft must always be a positive number — estimate from room proportions if no dimensions are shown
+- Never skip a room, even if unsure of the exact size
+- Include pixel coordinates in "points" tracing each surface boundary
 
-STEP 2 — After all surfaces, output dimension measurements found in the plan:
-{"type":"measurement","label":"<what was measured>","dimensionText":"<exact text>","pixelDistance":<integer>,"estimatedFeet":<number>,"confidence":<0-1>}
-
-Output surfaces FIRST, measurements SECOND. Begin now — JSON lines only:`,
+After recording all surfaces, use record_measurement for any dimension callouts you see on the plan (room sizes, wall lengths, etc.).`,
             },
           ],
         },
       ],
     });
 
-    console.log("Stream created, starting to read messages...");
+    console.log("Tool-use stream started");
 
     const encoder = new TextEncoder();
-    let totalChars = 0;
+    let toolCallCount = 0;
 
     const readable = new ReadableStream({
       async start(controller) {
         try {
+          let currentToolName = "";
+          let currentInputJson = "";
+          let inToolBlock = false;
+
           for await (const event of stream) {
-            if (
+            if (event.type === "content_block_start") {
+              if (event.content_block.type === "tool_use") {
+                currentToolName = event.content_block.name;
+                currentInputJson = "";
+                inToolBlock = true;
+              } else {
+                inToolBlock = false;
+              }
+            } else if (
               event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
+              inToolBlock &&
+              event.delta.type === "input_json_delta"
             ) {
-              const text = event.delta.text;
-              totalChars += text.length;
-              console.log(`Stream chunk: ${text.length} chars, total: ${totalChars}`);
-              controller.enqueue(encoder.encode(text));
+              currentInputJson += event.delta.partial_json;
+            } else if (event.type === "content_block_stop" && inToolBlock) {
+              inToolBlock = false;
+              if (currentInputJson) {
+                try {
+                  const toolInput = JSON.parse(currentInputJson);
+                  let line: string;
+                  if (currentToolName === "record_measurement") {
+                    line = JSON.stringify({ type: "measurement", ...toolInput });
+                  } else {
+                    line = JSON.stringify(toolInput);
+                  }
+                  toolCallCount++;
+                  console.log(`Tool call #${toolCallCount}: ${currentToolName} — ${line.slice(0, 80)}`);
+                  controller.enqueue(encoder.encode(line + "\n"));
+                } catch (e) {
+                  console.error("Failed to parse tool input JSON:", e, currentInputJson.slice(0, 200));
+                }
+                currentInputJson = "";
+                currentToolName = "";
+              }
             }
           }
 
-          // After stream is complete, signal to client that stream ended
-          console.log(`Stream complete. Total characters sent: ${totalChars}`);
-          const completionLine = JSON.stringify({ type: "stream_complete" });
-          controller.enqueue(encoder.encode("\n" + completionLine));
+          console.log(`Stream complete. Tool calls: ${toolCallCount}`);
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "stream_complete" }) + "\n"));
           controller.close();
         } catch (error: any) {
           console.error("Stream error:", error);
-          // Send error info as JSON instead of calling controller.error
-          const errorMsg = error?.message || String(error);
-          const errorLine = JSON.stringify({ type: "error", message: errorMsg });
-          controller.enqueue(encoder.encode("\n" + errorLine));
+          controller.enqueue(
+            encoder.encode(JSON.stringify({ type: "error", message: error?.message || String(error) }) + "\n")
+          );
           controller.close();
         }
       },
